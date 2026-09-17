@@ -59,6 +59,11 @@
 bash dev/run_tests.sh        # 一键复现（详见 dev/README.md）
 ```
 
+## 下载
+
+[**Releases**](https://github.com/liuqirui911/image-scrambler/releases/latest) 里直接下载 APK（约 100 KB，Android 8.0+）。
+附件名用 ASCII（`ImageScrambler-v<版本>.apk`）——GitHub 会吞掉 Release 附件名里的中文。
+
 ## 使用
 
 **混淆**：选图片 → 选格式与次数（默认小番茄、1 次）→ 开始混淆 → 保存到相册 / 分享。
