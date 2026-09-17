@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="page_bg">#FFF6F6F8</color>
+    <color name="card_bg">#FFFFFFFF</color>
+    <color name="field_bg">#0F000000</color>
+    <color name="field_bg_strong">#17000000</color>
+    <color name="mi_blue">#FF3482FF</color>
+    <color name="mi_blue_soft">#1A3482FF</color>
+    <color name="mi_green">#FF00C853</color>
+    <color name="text_primary">#FF1A1A1A</color>
+    <color name="text_secondary">#8C000000</color>
+    <color name="text_tertiary">#5E000000</color>
+    <color name="text_on_blue">#FFFFFFFF</color>
+    <color name="divider">#14000000</color>
+    <color name="ripple_light">#1F000000</color>
+    <color name="ripple_on_blue">#33FFFFFF</color>
+    <color name="track_off">#1A000000</color>
+    <color name="thumb">#FFFFFFFF</color>
+    <color name="sheet_handle">#1F000000</color>
+    <color name="ic_launcher_background">#FFFFFFFF</color>
+</resources>

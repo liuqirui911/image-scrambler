@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="meta_tagged"> · 含参数标记</string>
+    <string name="err_unknown">未知错误</string>
+    <string name="image_png_size">PNG %1$s</string>
+    <string name="row_format">混淆格式</string>
+    <string name="row_auto">还原时自动识别格式</string>
+    <string name="row_auto_desc">依次尝试各流行格式，取最像照片的结果；图片带标记时直接采用标记里的格式与次数。</string>
+    <string name="format_dialog_title">选择混淆格式</string>
+    <string name="format_tag">网络通用</string>
+    <string name="key_hint_tomato">该格式不需要密钥</string>
+    <string name="key_hint_numeric">0-1 之间的小数密钥（默认 0.666）</string>
+    <string name="key_hint_popular">任意密钥，网络工具默认 0.666</string>
+    <string name="key_desc_tomato">小番茄混淆是固定算法，不用密钥：任何人都能用同一个工具或本应用还原。</string>
+    <string name="key_desc_numeric">PicEncrypt 系列用 0-1 的小数作为混沌映射初值，网页与 App 工具默认 0.666。</string>
+    <string name="key_desc_popular">这类混淆用密钥派生像素置换，网络工具默认密钥是 0.666，留空即使用它。</string>
+    <string name="tag_loaded">已读取图片标记：%1$s · %2$d 次</string>
+    <string name="tag_none">图片没有参数标记，将按所选格式与次数还原</string>
+    <string name="err_read">读取失败：%1$s</string>
+    <string name="err_format">这个格式读不了（相机 RAW / .dng 等），请换 JPG、PNG 或 WebP 图片</string>
+    <string name="err_decode">图片解码失败：可能文件损坏，或云相册里的图片还没下载到本地</string>
+    <string name="err_permission">没有权限读取这张图片，换一张或用「文件」里的图片试试</string>
+    <string name="err_unavailable">打不开这张图片，可能来自云相册或该来源不支持；先把它下载到本地再试</string>
+    <string name="err_oom">内存不足，换一张小一点的图片</string>
+    <string name="warn_scaled_restore">已按内存上限等比缩小；如果这是别人的混淆图，缩小后可能还原不出来</string>
+    <string name="sheet_cancel">取消</string>
+    <string name="format_sheet_hint">前 6 种是网络通用格式，能与网页 / App 工具互相还原；最后一种为本应用独有的高安全格式。</string>
+    <string-array name="format_desc">
+        <item>固定算法 · 无需密钥，与网页版小番茄混淆互通</item>
+        <item>Logistic 混沌排序，逐行 + 逐列置换</item>
+        <item>同一行置换作用于每一行，密钥默认 0.666</item>
+        <item>MD5 密钥派生置换，逐行重排像素</item>
+        <item>每个像素由 x / y 两个置换共同决定</item>
+        <item>按 32×32 方块打乱，尺寸会补齐到 32 倍数</item>
+        <item>ChaCha20 密钥流 + 行列洗牌，支持自定义密钥</item>
+    </string-array>
+    <string name="auto_detected">已自动识别：%1$s</string>
+</resources>

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 左侧留白的分隔线（MIUI 列表习惯：分隔线不顶到左边） -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@color/divider"
+    android:insetLeft="20dp" />

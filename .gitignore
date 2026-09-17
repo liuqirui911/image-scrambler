@@ -1,0 +1,32 @@
+# 构建产物
+/build/
+*.apk
+*.ap_
+*.class
+*.dex
+
+# 本地工具链（体积很大，按需自行下载，见 README「构建」一节）
+/tools/
+/android-32/
+/android-35/
+/*.zip
+
+# 签名密钥：绝对不要提交
+/keystore/
+
+# 测试用的输入图与中间产物
+/test/
+
+# Python
+__pycache__/
+*.pyc
+
+# 编辑器 / 系统
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 图标流水线的中间产物（由 make_icons.sh 生成）
+/raw/base.png

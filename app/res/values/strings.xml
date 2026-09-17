@@ -1,0 +1,57 @@
+<resources>
+    <string name="app_name">混淆图</string>
+    <string name="app_subtitle">本地处理 · 无需联网 · 无损可还原</string>
+    <string name="tab_scramble">混淆</string>
+    <string name="tab_restore">还原</string>
+    <string name="about">关于</string>
+    <string name="title_about">关于混淆图</string>
+
+    <string name="card_image">图片</string>
+    <string name="pick_hint">点击选择图片</string>
+    <string name="image_empty">还没有选择图片</string>
+    <string name="image_info">%1$d × %2$d</string>
+    <string name="image_scaled">%1$d × %2$d（已按内存上限等比缩放）</string>
+    <string name="reselect">重新选择</string>
+
+    <string name="card_key">密钥</string>
+    <string name="key_hint">输入密钥，支持中文与 emoji</string>
+    <string name="key_desc">同一个密钥才能还原。留空表示使用默认密钥，任何人都能用默认设置还原。</string>
+    <string name="key_toggle_show">显示密钥</string>
+    <string name="key_toggle_hide">隐藏密钥</string>
+
+    <string name="card_advanced">高级设置</string>
+    <string name="row_strength">叠加次数</string>
+    <string name="strength_1">1 次</string>
+    <string name="strength_2">2 次</string>
+    <string name="strength_3">3 次</string>
+    <string name="row_tag">写入参数标记</string>
+    <string name="row_tag_desc">在 PNG 里写入轮数，还原时可自动识别；关闭后需手动选择相同强度。</string>
+    <string name="row_lossless">输出格式</string>
+    <string name="row_lossless_value">PNG（无损）</string>
+
+    <string name="run_scramble">开始混淆</string>
+    <string name="run_restore">开始还原</string>
+    <string name="running">处理中…</string>
+
+    <string name="card_result">处理结果</string>
+    <string name="result_meta">%1$d × %2$d · %3$s</string>
+    <string name="result_png">PNG %1$s</string>
+    <string name="save">保存到相册</string>
+    <string name="share">分享</string>
+    <string name="saved">已保存到相册 Pictures/混淆图</string>
+    <string name="saved_plain">已保存</string>
+
+    <string name="tip_scramble">混淆后的图片会变成噪声图：请用「文件 / 原图」方式发送，聊天软件的二次压缩会破坏可还原性。</string>
+    <string name="tip_restore">直接选图片即可：带标记的 PNG 自动采用标记参数，其他图片按格式自动识别（小番茄 / PicEncrypt / 像素 / 方块）。</string>
+    <string name="tag_found">已从图片标记读取参数：%1$d 轮</string>
+    <string name="tag_missing">图片没有参数标记，将使用上面选择的强度（%1$d 轮）</string>
+
+    <string name="err_pick">无法读取这张图片</string>
+    <string name="err_too_big">图片太大，换一张小一点的吧</string>
+    <string name="err_no_image">请先选择图片</string>
+    <string name="err_save">保存失败：%1$s</string>
+    <string name="no_permission">需要存储权限才能保存图片</string>
+    <string name="busy">正在处理，请稍候</string>
+
+    <string name="about_body">混淆图 1.1\n\n一个完全离线的图片混淆 / 还原工具：既能还原网络上流行的混淆图，也能自己生成。\n\n【兼容的网络格式】\n• 小番茄混淆 —— Gilbert 空间填充曲线 + 循环位移，固定算法、无需密钥，网页工具与其他 App 都能互通\n• PicEncrypt 行列混淆 / 行模式混淆 —— Logistic 混沌映射排序，密钥是 0-1 的小数（默认 0.666）\n• 行像素混淆 / 全像素混淆 / 方块混淆 —— 按 MD5(key+i) 派生置换，密钥默认 0.666\n• 本机密钥流混淆 —— ChaCha20 密钥流 + 行列洗牌，支持任意密钥、中文密钥与 1-4 轮\n\n【互通性】\n各流行格式的像素映射都与原版实现逐像素对齐，并做过双向验证：官网工具生成的混淆图本应用能还原，本应用生成的也能被官网工具还原。\n\n【怎么还原别人发的混淆图】\n切到「还原」直接选图片：带本应用标记的 PNG 会自动采用标记中的格式与次数；其他图片会依次尝试各流行格式（含 1 次 / 2 次），自动挑出最像照片的那一个。也可以关掉「自动识别」手动指定格式。\n\n【隐私】\n应用没有申请任何联网权限，图片只在设备内存中处理，不写临时文件。\n\n【提示】\n混淆图必须无损传输才能真正还原，避免经过会重新压缩图片的聊天软件。方块混淆会把尺寸补齐到 32 的倍数，用本应用输出（带标记）再还原时会自动裁掉多余边缘。\n\n版本 1.6 · Android 8.0+ · MIUI 风格\n</string>
+</resources>
