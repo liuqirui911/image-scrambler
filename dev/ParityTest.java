@@ -17,8 +17,10 @@ public class ParityTest {
     static int diff = 0;
 
     public static void main(String[] args) {
+        // 尺寸刻意跨过并行阈值（26 万像素）两侧，并含奇数边、单像素、方块补齐边
         int[][] sizes = {{1, 1}, {5, 3}, {9, 1}, {1, 9}, {37, 91}, {64, 64}, {31, 33},
-                         {320, 240}, {129, 777}, {700, 500}, {1024, 768}};
+                         {320, 240}, {129, 777}, {255, 1024}, {256, 1024}, {257, 1024},
+                         {513, 512}, {700, 500}, {1024, 768}};
         String[] allKeys = {"0.666", "123456", "混淆图", "", "emoji😀"};
         int[] allTimes = {1, 2, 3, 4};
 
@@ -88,6 +90,26 @@ public class ParityTest {
                         fail("autoRestore " + w + "x" + h + " key='" + key + "' times=" + times
                                 + " 格式 " + cf1[0] + "/" + cf2[0] + " 评分 " + cs1[0] + "/" + cs2[0]);
                     }
+                }
+            }
+        }
+
+        // 并行确定性：同一输入重复跑必须逐位一致（线程调度不同也不允许出现差异）
+        for (int[] s : new int[][] {{257, 1024}, {256, 1024}, {513, 512}, {1024, 768}, {2000, 130}}) {
+            for (int f = 0; f < PopularCodecs.FORMAT_COUNT; f++) {
+                for (int times = 1; times <= 2; times++) {
+                    int[] im = img(s[0], s[1], 7777);
+                    PopularCodecs.Result a = PopularCodecs.transform(f, im, s[0], s[1], "0.666", times, true);
+                    PopularCodecs.Result b = PopularCodecs.transform(f, im, s[0], s[1], "0.666", times, true);
+                    checked++;
+                    if (a.width != b.width || a.height != b.height || !Arrays.equals(a.pixels, b.pixels)) {
+                        fail("并行结果不确定 fmt=" + f + " " + s[0] + "x" + s[1] + " times=" + times);
+                    }
+                    int[] x = im.clone(), y = im.clone();
+                    Scrambler.scramble(x, s[0], s[1], "混淆图", 2);
+                    Scrambler.scramble(y, s[0], s[1], "混淆图", 2);
+                    checked++;
+                    if (!Arrays.equals(x, y)) fail("并行结果不确定 scramble " + s[0] + "x" + s[1] + " times=" + times);
                 }
             }
         }

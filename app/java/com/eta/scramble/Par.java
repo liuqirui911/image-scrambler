@@ -68,7 +68,13 @@ final class Par {
                     }
                 }
             };
-            th.start();
+            try {
+                th.start();
+            } catch (Throwable e) {
+                // 线程创建失败（内存紧张等）：余下区间在当前线程串行做完，结果与并行完全相同
+                task.run(from, total);
+                break;
+            }
             workers[started++] = th;
         }
         for (int i = 0; i < started; i++) {
