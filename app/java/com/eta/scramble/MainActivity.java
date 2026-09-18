@@ -514,6 +514,7 @@ public class MainActivity extends Activity {
 
     /** 两遍流式解码：先读尺寸算采样率，再按需解码，全程不缓存整张原图。 */
     private Decoded decode(Uri uri, byte[] head, int maxPixels, int maxEdge) throws Exception {
+        long startedAt = SystemClock.elapsedRealtime();
         BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
         InputStream first = open(uri);
@@ -550,6 +551,8 @@ public class MainActivity extends Activity {
         decoded.bitmap = bitmap;
         decoded.srcWidth = bounds.outWidth;
         decoded.srcHeight = bounds.outHeight;
+        Log.i(TAG, "解码 " + bounds.outWidth + "x" + bounds.outHeight + " → " + bitmap.getWidth() + "x"
+                + bitmap.getHeight() + "（采样 1/" + sample + "）用时 " + (SystemClock.elapsedRealtime() - startedAt) + " ms");
         return decoded;
     }
 
@@ -670,8 +673,10 @@ public class MainActivity extends Activity {
                 String error = null;
                 String note = null;
                 try {
+                    long t0 = SystemClock.elapsedRealtime();
                     int[] pixels = new int[w * h];
                     source.getPixels(pixels, 0, w, 0, 0, w, h);
+                    long t1 = SystemClock.elapsedRealtime();
                     int usedFormat = fmt;
                     PopularCodecs.Result result;
                     if (scrambleMode) {
@@ -685,6 +690,7 @@ public class MainActivity extends Activity {
                     } else {
                         result = PopularCodecs.transform(fmt, pixels, w, h, key, times, false);
                     }
+                    long t2 = SystemClock.elapsedRealtime();
                     int outW = result.width;
                     int outH = result.height;
                     int[] outPixels = result.pixels;
@@ -695,14 +701,21 @@ public class MainActivity extends Activity {
                     }
                     output = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888);
                     output.setPixels(outPixels, 0, outW, 0, 0, outW, outH);
+                    long t3 = SystemClock.elapsedRealtime();
                     ByteArrayOutputStream bo = new ByteArrayOutputStream();
                     if (!output.compress(Bitmap.CompressFormat.PNG, 100, bo)) {
                         throw new IllegalStateException("PNG 编码失败");
                     }
                     bytes = bo.toByteArray();
+                    long t4 = SystemClock.elapsedRealtime();
                     if (writeTag) {
                         bytes = PngMeta.insertText(bytes, PngMeta.buildTag(usedFormat, times, w, h));
                     }
+                    long t5 = SystemClock.elapsedRealtime();
+                    Log.i(TAG, (scrambleMode ? "混淆 " : "还原 ") + w + "x" + h + " 格式=" + usedFormat
+                            + " 次数=" + times + "（输出 " + outW + "x" + outH + "）| 取像素 " + (t1 - t0)
+                            + "，算法 " + (t2 - t1) + "，位图 " + (t3 - t2) + "，PNG 编码 " + (t4 - t3)
+                            + "，标记 " + (t5 - t4) + "，合计 " + (t5 - started) + " ms");
                 } catch (Throwable t) {
                     error = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
                     bytes = null;

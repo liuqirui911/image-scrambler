@@ -2,7 +2,9 @@ package com.eta.scramble;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * 网络流行混淆图格式的兼容实现。
@@ -167,36 +169,107 @@ public final class PopularCodecs {
         return dst;
     }
 
-    /** 生成 Gilbert / Hilbert 空间填充曲线经过的像素下标序列。 */
-    static int[] gilbertOrder(int width, int height) {
-        int[] positions = new int[width * height];
-        int[] cursor = new int[1];
-        if (width >= height) {
-            generate2d(positions, cursor, 0, 0, width, 0, 0, height, width);
-        } else {
-            generate2d(positions, cursor, 0, 0, 0, height, width, 0, width);
+    /** 并行生成的门槛：低于这么多格子就老老实实串行递归。 */
+    private static final int PAR_MIN_CELLS = 1 << 18;
+
+    /**
+     * 生成 Gilbert / Hilbert 空间填充曲线经过的像素下标序列。
+     *
+     * 关键性质：一个子矩形遍历产生的下标个数**恒等于它的格子数** |ax+ay|·|bx+by|，
+     * 与它内部的遍历顺序无关。所以只要按原始先后把子块的格子数累加，就能事先算出
+     * 每个子块该从哪个下标开始写——各子块写的区间互不重叠，且顺序与串行完全一致，
+     * 于是可以切开交给多个线程同时生成。
+     */
+    /** 供自测使用：曲线下标序列（并行生成）。 */
+    public static int[] gilbertOrder(int width, int height) {
+        final int[] positions = new int[width * height];
+        final int widthArg = width;
+        int threads = positions.length >= PAR_MIN_CELLS ? Par.threads() : 1;
+        if (threads <= 1) {
+            if (width >= height) {
+                generate2d(positions, 0, 0, 0, width, 0, 0, height, width);
+            } else {
+                generate2d(positions, 0, 0, 0, 0, height, width, 0, width);
+            }
+            return positions;
         }
+        final List<Sub> parts = new ArrayList<Sub>();
+        if (width >= height) {
+            splitInto(parts, threads, 0, 0, 0, width, 0, 0, height);
+        } else {
+            splitInto(parts, threads, 0, 0, 0, 0, height, width, 0);
+        }
+        Par.forEachIndex(parts.size(), new Par.Indexed() {
+            @Override public void run(int index) {
+                Sub s = parts.get(index);
+                generate2d(positions, s.start, s.x, s.y, s.ax, s.ay, s.bx, s.by, widthArg);
+            }
+        });
         return positions;
     }
 
-    private static void generate2d(int[] positions, int[] cursor, int x, int y,
-                                   int ax, int ay, int bx, int by, int width) {
+    /** 一段子矩形：递归遍历参数 + 它在 positions 中的起始下标。 */
+    private static final class Sub {
+        final int start, x, y, ax, ay, bx, by;
+
+        Sub(int start, int x, int y, int ax, int ay, int bx, int by) {
+            this.start = start;
+            this.x = x;
+            this.y = y;
+            this.ax = ax;
+            this.ay = ay;
+            this.bx = bx;
+            this.by = by;
+        }
+
+        /** 遍历这块会写出的下标个数，恒等于格子数。 */
+        int size() {
+            return Math.abs(ax + ay) * Math.abs(bx + by);
+        }
+
+        /** 已经是一行/一列，不能再切。 */
+        boolean leaf() {
+            return Math.abs(ax + ay) == 1 || Math.abs(bx + by) == 1;
+        }
+    }
+
+    /**
+     * 先把曲线切成 threads 块（只遍历树的形状，不写下标）：每次挑最大的一块继续切，
+     * 这样各块大小自然接近，负载比较均衡。切不动（叶子或太小）就停。
+     */
+    private static void splitInto(List<Sub> parts, int want, int start, int x, int y,
+                                  int ax, int ay, int bx, int by) {
+        parts.add(new Sub(start, x, y, ax, ay, bx, by));
+        while (parts.size() < want) {
+            int idx = -1;
+            int biggest = 0;
+            for (int i = 0; i < parts.size(); i++) {
+                Sub s = parts.get(i);
+                if (s.leaf() || s.size() < PAR_MIN_CELLS * 2) continue;
+                if (s.size() > biggest) {
+                    biggest = s.size();
+                    idx = i;
+                }
+            }
+            if (idx < 0) break;
+            Sub s = parts.remove(idx);
+            Sub[] subs = new Sub[3];
+            int n = split(s.start, s.x, s.y, s.ax, s.ay, s.bx, s.by, subs);
+            for (int i = 0; i < n; i++) parts.add(idx + i, subs[i]);
+        }
+    }
+
+    /**
+     * 按原算法的分裂规则把一个矩形拆成 2 或 3 个子矩形，顺序与串行遍历一致。
+     * 子块起始下标 = 父块起点 + 前面各子块的格子数之和。
+     */
+    private static int split(int start, int x, int y, int ax, int ay, int bx, int by, Sub[] subs) {
         int w = Math.abs(ax + ay);
         int h = Math.abs(bx + by);
         int dax = Integer.signum(ax);
         int day = Integer.signum(ay);
         int dbx = Integer.signum(bx);
         int dby = Integer.signum(by);
-
-        if (h == 1) {
-            emitLine(positions, cursor, x, y, width, dax, day, w);
-            return;
-        }
-        if (w == 1) {
-            emitLine(positions, cursor, x, y, width, dbx, dby, h);
-            return;
-        }
-
         int ax2 = Math.floorDiv(ax, 2);
         int ay2 = Math.floorDiv(ay, 2);
         int bx2 = Math.floorDiv(bx, 2);
@@ -209,33 +282,54 @@ public final class PopularCodecs {
                 ax2 += dax;
                 ay2 += day;
             }
-            generate2d(positions, cursor, x, y, ax2, ay2, bx, by, width);
-            generate2d(positions, cursor, x + ax2, y + ay2, ax - ax2, ay - ay2, bx, by, width);
-        } else {
-            if ((h2 & 1) == 1 && h > 2) {
-                bx2 += dbx;
-                by2 += dby;
-            }
-            generate2d(positions, cursor, x, y, bx2, by2, ax2, ay2, width);
-            generate2d(positions, cursor, x + bx2, y + by2, ax, ay, bx - bx2, by - by2, width);
-            generate2d(positions, cursor, x + (ax - dax) + (bx2 - dbx), y + (ay - day) + (by2 - dby),
-                    -bx2, -by2, -(ax - ax2), -(ay - ay2), width);
+            subs[0] = new Sub(start, x, y, ax2, ay2, bx, by);
+            subs[1] = new Sub(subs[0].start + subs[0].size(), x + ax2, y + ay2, ax - ax2, ay - ay2, bx, by);
+            return 2;
+        }
+        if ((h2 & 1) == 1 && h > 2) {
+            bx2 += dbx;
+            by2 += dby;
+        }
+        subs[0] = new Sub(start, x, y, bx2, by2, ax2, ay2);
+        subs[1] = new Sub(subs[0].start + subs[0].size(), x + bx2, y + by2, ax, ay, bx - bx2, by - by2);
+        subs[2] = new Sub(subs[1].start + subs[1].size(),
+                x + (ax - dax) + (bx2 - dbx), y + (ay - day) + (by2 - dby),
+                -bx2, -by2, -(ax - ax2), -(ay - ay2));
+        return 3;
+    }
+
+    private static void generate2d(int[] positions, int start, int x, int y,
+                                   int ax, int ay, int bx, int by, int width) {
+        int w = Math.abs(ax + ay);
+        int h = Math.abs(bx + by);
+        if (h == 1) {
+            emitLine(positions, start, x, y, width, Integer.signum(ax), Integer.signum(ay), w);
+            return;
+        }
+        if (w == 1) {
+            emitLine(positions, start, x, y, width, Integer.signum(bx), Integer.signum(by), h);
+            return;
+        }
+        Sub[] subs = new Sub[3];
+        int n = split(start, x, y, ax, ay, bx, by, subs);
+        for (int i = 0; i < n; i++) {
+            Sub s = subs[i];
+            generate2d(positions, s.start, s.x, s.y, s.ax, s.ay, s.bx, s.by, width);
         }
     }
 
     /**
-     * 沿固定方向连续写 count 个像素下标：步长是常数，省掉每像素的乘法与 cursor 数组反复读写。
-     * 与原写法逐像素等价（x+i·dx + (y+i·dy)·width == x+y·width + i·(dx+dy·width)）。
+     * 从 start 开始连续写 count 个下标：沿固定方向前进，步长是常数，
+     * 省掉每像素的乘法（x+i·dx + (y+i·dy)·width == x+y·width + i·(dx+dy·width)）。
      */
-    private static void emitLine(int[] positions, int[] cursor, int x, int y, int width, int dx, int dy, int count) {
+    private static void emitLine(int[] positions, int start, int x, int y, int width, int dx, int dy, int count) {
         int idx = x + y * width;
         int step = dx + dy * width;
-        int cur = cursor[0];
+        int cur = start;
         for (int i = 0; i < count; i++) {
             positions[cur++] = idx;
             idx += step;
         }
-        cursor[0] = cur;
     }
 
     // ------------------------------------------------------------ 1/2 PicEncrypt（Logistic 混沌排序）

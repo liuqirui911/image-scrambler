@@ -27,6 +27,11 @@ final class Par {
         void run(int from, int to);
     }
 
+    interface Indexed {
+        /** 处理第 index 个任务。不同任务之间不得有写冲突。 */
+        void run(int index);
+    }
+
     private Par() {}
 
     static int threads() {
@@ -85,9 +90,55 @@ final class Par {
                 break;
             }
         }
-        Throwable f = failure[0];
+        rethrow(failure[0]);
+    }
+
+    /**
+     * 并行跑 count 个互不干扰的小任务：前 count-1 个各起一个线程，最后一个留在当前线程做。
+     * 线程创建失败就在当前线程补做，行为与全部起线程时完全相同（不会因为并行而失败）。
+     */
+    static void forEachIndex(final int count, final Indexed task) {
+        if (count <= 0) return;
+        int started = 0;
+        Thread[] workers = new Thread[count];
+        final Throwable[] failure = new Throwable[1];
+        for (int i = 0; i < count - 1; i++) {
+            final int index = i;
+            Thread th = new Thread("scramble-part-" + i) {
+                @Override public void run() {
+                    try {
+                        task.run(index);
+                    } catch (Throwable e) {
+                        synchronized (failure) {
+                            if (failure[0] == null) failure[0] = e;
+                        }
+                    }
+                }
+            };
+            try {
+                th.start();
+            } catch (Throwable e) {
+                break; // 起不了线程：剩下的（含本次）都在当前线程补做
+            }
+            workers[started++] = th;
+        }
+        for (int i = started; i < count; i++) {
+            task.run(i);
+        }
+        for (int i = 0; i < started; i++) {
+            try {
+                workers[i].join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        rethrow(failure[0]);
+    }
+
+    private static void rethrow(Throwable f) {
         if (f instanceof RuntimeException) throw (RuntimeException) f;
-        if (f instanceof Error) throw (Error) f; // 包括 OutOfMemoryError，交给上层的统一错误处理
+        if (f instanceof Error) throw (Error) f; // 包括 OutOfMemoryError，交给上层统一错误处理
         if (f != null) throw new IllegalStateException(f);
     }
 }

@@ -2,6 +2,6 @@
 <resources>
     <string name="footer_note">本应用没有申请任何联网权限，图片只在设备内存中处理，不写临时文件。混淆结果请以原文件（PNG）方式发送给需要还原的人。</string>
     <string name="back">返回</string>
-    <string name="app_version">版本 1.7 · Android 8.0+ · MIUI 风格</string>
+    <string name="app_version">版本 1.7.1 · Android 8.0+ · MIUI 风格</string>
     <string name="about_desc">完全离线的图片混淆 / 还原工具</string>
 </resources>

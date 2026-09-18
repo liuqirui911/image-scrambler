@@ -114,6 +114,33 @@ public class ParityTest {
             }
         }
 
+        // Gilbert 曲线序本身：直接对拍下标序列（含极端长宽比、阈值两侧、1080p/4K 尺寸）
+        int[][] curves = {{1, 1}, {2, 3}, {7, 3000}, {3000, 7}, {1, 4096}, {4096, 1}, {37, 91},
+                          {255, 1024}, {256, 1024}, {257, 1024}, {333, 777}, {1023, 1024}, {1024, 1023},
+                          {1080, 1920}, {1920, 1080}, {2160, 1080}, {1080, 2160}, {5000, 3}, {3, 5000}};
+        for (int[] s : curves) {
+            int n = s[0] * s[1];
+            int[] a = PopularCodecs.gilbertOrder(s[0], s[1]);
+            int[] b = LegacyCodecs.gilbertOrder(s[0], s[1]);
+            checked++;
+            if (!Arrays.equals(a, b)) {
+                int first = -1;
+                for (int i = 0; i < n && first < 0; i++) if (a[i] != b[i]) first = i;
+                fail("gilbertOrder " + s[0] + "x" + s[1] + " 与旧实现不同，首个差异下标=" + first);
+                continue;
+            }
+            // 独立性检查：必须是 [0, n) 的置换（若子块格子数累加不成立就会在这里露出来）
+            checked++;
+            boolean[] seen = new boolean[n];
+            boolean ok = true;
+            for (int i = 0; i < n; i++) {
+                int v = a[i];
+                if (v < 0 || v >= n || seen[v]) { ok = false; break; }
+                seen[v] = true;
+            }
+            if (!ok) fail("gilbertOrder " + s[0] + "x" + s[1] + " 不是合法置换");
+        }
+
         // 本机密钥流混淆：直接对拍 Scrambler（含 1-4 轮）
         for (int[] s : sizes) {
             int w = s[0], h = s[1];

@@ -157,7 +157,7 @@ public final class LegacyCodecs {
     }
 
     /** 生成 Gilbert / Hilbert 空间填充曲线经过的像素下标序列。 */
-    static int[] gilbertOrder(int width, int height) {
+    public static int[] gilbertOrder(int width, int height) {
         int[] positions = new int[width * height];
         int[] cursor = new int[1];
         if (width >= height) {

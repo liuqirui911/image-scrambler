@@ -44,6 +44,22 @@ public class DeviceBench {
             System.out.println(pad(name(f)) + pad(ms(oldT)) + pad(ms(newT)) + ratio(oldT, newT));
         }
 
+        // Gilbert 曲线序生成本身（小番茄格式的主要开销）
+        {
+            long oldT = Long.MAX_VALUE, newT = Long.MAX_VALUE;
+            for (int r = 0; r < rounds; r++) {
+                long t0 = System.nanoTime();
+                int[] a = LegacyCodecs.gilbertOrder(w, h);
+                long t1 = System.nanoTime();
+                int[] b = PopularCodecs.gilbertOrder(w, h);
+                long t2 = System.nanoTime();
+                oldT = Math.min(oldT, t1 - t0);
+                newT = Math.min(newT, t2 - t1);
+                if (!same(a, b)) System.out.println("  !! gilbertOrder 与旧实现不一致");
+            }
+            System.out.println(pad("Gilbert 曲线序生成") + pad(ms(oldT)) + pad(ms(newT)) + ratio(oldT, newT));
+        }
+
         {
             long oldT = Long.MAX_VALUE, newT = Long.MAX_VALUE;
             for (int r = 0; r < rounds; r++) {
