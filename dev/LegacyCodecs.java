@@ -1,10 +1,13 @@
 package com.eta.scramble;
 
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Arrays;
 
 /**
+ * v1.6 旧实现的冻结副本，仅用于 dev/ParityTest 做逐位等价对拍，不参与 APK 构建。
+ *
  * 网络流行混淆图格式的兼容实现。
  *
  * 这些格式都不是本应用自创的，每种都严格按原版实现的像素映射复刻，
@@ -18,13 +21,8 @@ import java.util.Arrays;
  *  4 全像素混淆        同上，x/y 两个置换共同决定每一个像素的去向，字符串密钥
  *  5 方块混淆          同上，按 32×32 个方块打乱，尺寸会向上补齐到 32 的倍数，字符串密钥
  *  6 本机密钥流混淆     ChaCha20 密钥流 + 行列置换（见 Scrambler），支持任意密钥与轮数
- *
- * 并行化说明：每种变换都是“每个输出像素只写一次”的置换或散列映射，输出互不重叠，
- * 因此可以按行/列/像素区间切片交给多个线程（见 Par），结果与串行逐位一致。
- * 浮点部分（Logistic 链）并行时用“跳过 j×(w-1) 步”的方式让各段独立推进，
- * 与原来“上一行末尾续算”是同一串确定性 double 迭代，逐位相同。
  */
-public final class PopularCodecs {
+public final class LegacyCodecs {
 
     public static final int FORMAT_TOMATO = 0;
     public static final int FORMAT_PIC_ROWCOL = 1;
@@ -49,7 +47,7 @@ public final class PopularCodecs {
             "本机密钥流混淆（自定义密钥）"
     };
 
-    private PopularCodecs() {}
+    private LegacyCodecs() {}
 
     public static String name(int format) {
         if (format < 0 || format >= NAMES.length) return NAMES[0];
@@ -80,7 +78,7 @@ public final class PopularCodecs {
     }
 
     /**
-     * 按指定格式处理像素。不会修改传入的数组：各格式都是读 src、写新数组。
+     * 按指定格式处理像素。
      *
      * @param times   叠加次数（1-4），等于把同一次变换重复应用若干遍
      * @param encrypt true 混淆，false 还原
@@ -90,8 +88,8 @@ public final class PopularCodecs {
         if (format == FORMAT_ETA) {
             // 本机格式：轮数直接交给 Scrambler，保持与旧版本生成的图片兼容
             int[] copy = pixels.clone();
-            if (encrypt) Scrambler.scramble(copy, width, height, key, loops);
-            else Scrambler.unscramble(copy, width, height, key, loops);
+            if (encrypt) LegacyScrambler.scramble(copy, width, height, key, loops);
+            else LegacyScrambler.unscramble(copy, width, height, key, loops);
             return new Result(copy, width, height);
         }
         Result current = new Result(pixels, width, height);
@@ -144,26 +142,17 @@ public final class PopularCodecs {
     // ------------------------------------------------------------ 0 小番茄（Gilbert 曲线）
 
     private static int[] tomato(int[] src, int w, int h, boolean decrypt) {
-        final int n = w * h;
-        final int[] order = gilbertOrder(w, h);
+        int n = w * h;
+        int[] order = gilbertOrder(w, h);
         int offset = (int) Math.round((Math.sqrt(5) - 1) / 2 * n);
         offset = ((offset % n) + n) % n;
-        final int shift = offset;
-        final int[] dst = new int[n];
-        final boolean dec = decrypt;
-        // 每个 i 恰好写出 order[(i+shift)%n] 一次，互不重叠，可任意切片并行。
-        Par.each(n, n, new Par.Range() {
-            @Override public void run(int from, int to) {
-                int k = (int) ((from + (long) shift) % n);
-                for (int i = from; i < to; i++) {
-                    int a = order[i];
-                    int b = order[k];
-                    if (dec) dst[a] = src[b];
-                    else dst[b] = src[a];
-                    if (++k == n) k = 0;
-                }
-            }
-        });
+        int[] dst = new int[n];
+        for (int i = 0; i < n; i++) {
+            int from = order[i];
+            int to = order[(i + offset) % n];
+            if (decrypt) dst[from] = src[to];
+            else dst[to] = src[from];
+        }
         return dst;
     }
 
@@ -183,17 +172,25 @@ public final class PopularCodecs {
                                    int ax, int ay, int bx, int by, int width) {
         int w = Math.abs(ax + ay);
         int h = Math.abs(bx + by);
-        int dax = Integer.signum(ax);
-        int day = Integer.signum(ay);
-        int dbx = Integer.signum(bx);
-        int dby = Integer.signum(by);
+        int dax = (int) Math.signum(ax);
+        int day = (int) Math.signum(ay);
+        int dbx = (int) Math.signum(bx);
+        int dby = (int) Math.signum(by);
 
         if (h == 1) {
-            emitLine(positions, cursor, x, y, width, dax, day, w);
+            for (int i = 0; i < w; i++) {
+                positions[cursor[0]++] = x + y * width;
+                x += dax;
+                y += day;
+            }
             return;
         }
         if (w == 1) {
-            emitLine(positions, cursor, x, y, width, dbx, dby, h);
+            for (int i = 0; i < h; i++) {
+                positions[cursor[0]++] = x + y * width;
+                x += dbx;
+                y += dby;
+            }
             return;
         }
 
@@ -223,40 +220,18 @@ public final class PopularCodecs {
         }
     }
 
-    /**
-     * 沿固定方向连续写 count 个像素下标：步长是常数，省掉每像素的乘法与 cursor 数组反复读写。
-     * 与原写法逐像素等价（x+i·dx + (y+i·dy)·width == x+y·width + i·(dx+dy·width)）。
-     */
-    private static void emitLine(int[] positions, int[] cursor, int x, int y, int width, int dx, int dy, int count) {
-        int idx = x + y * width;
-        int step = dx + dy * width;
-        int cur = cursor[0];
-        for (int i = 0; i < count; i++) {
-            positions[cur++] = idx;
-            idx += step;
-        }
-        cursor[0] = cur;
-    }
-
     // ------------------------------------------------------------ 1/2 PicEncrypt（Logistic 混沌排序）
 
     private static int[] picRow(int[] src, int w, int h, double key, boolean decrypt) {
-        // 整幅图共用同一张行内置换表，每一行互不重叠，按行并行。
-        final int[] positions = logisticPositions(key, w);
-        final int[] dst = new int[src.length];
-        final int width = w;
-        final boolean dec = decrypt;
-        Par.each(h, (long) w * h, new Par.Range() {
-            @Override public void run(int j0, int j1) {
-                for (int j = j0; j < j1; j++) {
-                    int off = j * width;
-                    for (int i = 0; i < width; i++) {
-                        if (dec) dst[positions[i] + off] = src[i + off];
-                        else dst[i + off] = src[positions[i] + off];
-                    }
-                }
+        int[] positions = logisticPositions(key, w);
+        int[] dst = new int[src.length];
+        for (int j = 0; j < h; j++) {
+            int off = j * w;
+            for (int i = 0; i < w; i++) {
+                if (decrypt) dst[positions[i] + off] = src[i + off];
+                else dst[i + off] = src[positions[i] + off];
             }
-        });
+        }
         return dst;
     }
 
@@ -264,67 +239,40 @@ public final class PopularCodecs {
         int[] dst = new int[src.length];
         if (!decrypt) {
             int[] rows = new int[src.length];
-            logisticRows(key, w, h, src, rows, false);
-            logisticColumns(key, h, w, rows, dst, false);
+            double x = key;
+            for (int j = 0, off = 0; j < h; j++, off += w) {
+                int[] positions = logisticPositions(x, w);
+                x = logisticLast(x, w);
+                for (int i = 0; i < w; i++) rows[i + off] = src[positions[i] + off];
+            }
+            x = key;
+            for (int i = 0; i < w; i++) {
+                int[] positions = logisticPositions(x, h);
+                x = logisticLast(x, h);
+                for (int j = 0; j < h; j++) dst[i + j * w] = rows[i + positions[j] * w];
+            }
         } else {
             int[] cols = new int[src.length];
-            logisticColumns(key, h, w, src, cols, true);
-            logisticRows(key, w, h, cols, dst, true);
+            double x = key;
+            for (int i = 0; i < w; i++) {
+                int[] positions = logisticPositions(x, h);
+                x = logisticLast(x, h);
+                for (int j = 0; j < h; j++) cols[i + positions[j] * w] = src[i + j * w];
+            }
+            x = key;
+            for (int j = 0, off = 0; j < h; j++, off += w) {
+                int[] positions = logisticPositions(x, w);
+                x = logisticLast(x, w);
+                for (int i = 0; i < w; i++) dst[positions[i] + off] = cols[i + off];
+            }
         }
         return dst;
     }
 
-    /**
-     * 逐行 Logistic 置换：第 j 行用序列起点 x_j = f^((w-1)·j)(key)。
-     * 与旧实现“上一行算完接着续算”完全等价（同一串确定性 double 迭代，逐位相同），
-     * 于是各线程可以各自跳到自己那一段的起点独立推进。
-     */
-    private static void logisticRows(final double key, final int w, final int h,
-                                     final int[] in, final int[] out, final boolean inverse) {
-        Par.each(h, (long) w * h, new Par.Range() {
-            @Override public void run(int j0, int j1) {
-                double[] values = new double[w];
-                int[] index = new int[w];
-                int[] tmp = new int[w];
-                double x = logisticSkip(key, (long) j0 * (w - 1));
-                for (int j = j0; j < j1; j++) {
-                    x = logisticInto(values, index, tmp, w, x);
-                    int off = j * w;
-                    if (inverse) {
-                        for (int i = 0; i < w; i++) out[index[i] + off] = in[i + off];
-                    } else {
-                        for (int i = 0; i < w; i++) out[i + off] = in[index[i] + off];
-                    }
-                }
-            }
-        });
-    }
-
-    /** 逐列 Logistic 置换：第 i 列用序列起点 x_i = f^((h-1)·i)(key)，列与列之间互不重叠。 */
-    private static void logisticColumns(final double key, final int h, final int w,
-                                        final int[] in, final int[] out, final boolean inverse) {
-        Par.each(w, (long) w * h, new Par.Range() {
-            @Override public void run(int i0, int i1) {
-                double[] values = new double[h];
-                int[] index = new int[h];
-                int[] tmp = new int[h];
-                double x = logisticSkip(key, (long) i0 * (h - 1));
-                for (int i = i0; i < i1; i++) {
-                    x = logisticInto(values, index, tmp, h, x);
-                    if (inverse) {
-                        for (int j = 0; j < h; j++) out[i + index[j] * w] = in[i + j * w];
-                    } else {
-                        for (int j = 0; j < h; j++) out[i + j * w] = in[i + index[j] * w];
-                    }
-                }
-            }
-        });
-    }
-
-    /** 从 x1 起把 Logistic 映射迭代 steps 次，用于并行时直接跳到某一行/列的起点。 */
-    private static double logisticSkip(double x1, long steps) {
+    /** 与参考实现一致：x0 = x1，随后 x = 3.9999999 * x * (1 - x)，返回第 n 个状态。 */
+    private static double logisticLast(double x1, int n) {
         double x = x1;
-        for (long i = 0; i < steps; i++) {
+        for (int i = 1; i < n; i++) {
             x = 3.9999999 * x * (1 - x);
         }
         return x;
@@ -334,16 +282,6 @@ public final class PopularCodecs {
     private static int[] logisticPositions(double x1, int n) {
         double[] values = new double[n];
         int[] index = new int[n];
-        int[] tmp = new int[n];
-        logisticInto(values, index, tmp, n, x1);
-        return index;
-    }
-
-    /**
-     * 生成 Logistic 序列并原地排序出位置表，结果写进调用方提供的缓冲（避免逐行重复分配）。
-     * 返回序列最后一个状态，可直接作为下一行/列的起点，省掉一次重复迭代。
-     */
-    private static double logisticInto(double[] values, int[] index, int[] tmp, int n, double x1) {
         double x = x1;
         values[0] = x;
         index[0] = 0;
@@ -352,25 +290,26 @@ public final class PopularCodecs {
             values[i] = x;
             index[i] = i;
         }
-        double last = x;
-        mergeSortByValue(values, index, 0, n - 1, tmp);
-        return last;
+        mergeSortByValue(values, index, 0, n - 1, new int[n], new int[n]);
+        return index;
     }
 
     /** 与参考实现的 Arrays.sort(comparator: a>b ? 1 : -1) 等价的稳定归并排序。 */
-    private static void mergeSortByValue(double[] values, int[] index, int lo, int hi, int[] tmpIdx) {
+    private static void mergeSortByValue(double[] values, int[] index, int lo, int hi, int[] tmpIdx, int[] tmpVal) {
         if (lo >= hi) return;
         int mid = (lo + hi) >>> 1;
-        mergeSortByValue(values, index, lo, mid, tmpIdx);
-        mergeSortByValue(values, index, mid + 1, hi, tmpIdx);
+        mergeSortByValue(values, index, lo, mid, tmpIdx, tmpVal);
+        mergeSortByValue(values, index, mid + 1, hi, tmpIdx, tmpVal);
         int i = lo, j = mid + 1, k = lo;
         while (i <= mid && j <= hi) {
             boolean takeLeft = !(values[index[i]] > values[index[j]]);
             if (takeLeft) {
                 tmpIdx[k] = index[i];
+                tmpVal[k] = 0;
                 i++;
             } else {
                 tmpIdx[k] = index[j];
+                tmpVal[k] = 0;
                 j++;
             }
             k++;
@@ -386,23 +325,16 @@ public final class PopularCodecs {
 
     // ------------------------------------------------------------ 3/4/5 像素与方块混淆（MD5 置换）
 
-    private static final char[] HEX = "0123456789abcdef".toCharArray();
-
     private static int[] md5Shuffle(String key, int length) {
         int[] arr = new int[length];
         for (int i = 0; i < length; i++) arr[i] = i;
-        if (length < 2) return arr;
-        MessageDigest md = md5Digest(); // 复用实例：一张置换表要算数千次哈希
-        char[] hex = new char[32];
         for (int i = length - 1; i > 0; i--) {
-            byte[] digest = md.digest((key + i).getBytes(StandardCharsets.UTF_8));
-            for (int b = 0; b < 16; b++) {
-                int v = digest[b] & 0xFF;
-                hex[b * 2] = HEX[v >>> 4];
-                hex[b * 2 + 1] = HEX[v & 0xF];
+            byte[] md5 = md5((key + i).getBytes(StandardCharsets.UTF_8));
+            String hex = new BigInteger(1, md5).toString(16);
+            while (hex.length() < 32) {
+                hex = "0" + hex;
             }
-            // 与原实现 BigInteger(1,md5).toString(16) 左补 0 到 32 位后取前 7 位十六进制完全等价
-            int rand = Integer.parseInt(new String(hex, 0, 7), 16) % (i + 1);
+            int rand = Integer.parseInt(hex.substring(0, 7), 16) % (i + 1);
             int tmp = arr[rand];
             arr[rand] = arr[i];
             arr[i] = tmp;
@@ -410,97 +342,70 @@ public final class PopularCodecs {
         return arr;
     }
 
-    private static MessageDigest md5Digest() {
+    private static byte[] md5(byte[] data) {
         try {
-            return MessageDigest.getInstance("MD5");
+            return MessageDigest.getInstance("MD5").digest(data);
         } catch (Exception e) {
             throw new IllegalStateException("MD5 unavailable", e);
         }
     }
 
     private static int[] rowPixel(int[] src, int w, int h, String key, boolean decrypt) {
-        final int[] xArray = md5Shuffle(key, w);
-        final int[] dst = new int[src.length];
-        final int width = w;
-        final boolean dec = decrypt;
-        // 每行只读写自己那一行，按行并行；行内把 (xArray[j%w]+i)%w 换成自增取模，省掉逐像素除法。
-        Par.each(h, (long) w * h, new Par.Range() {
-            @Override public void run(int j0, int j1) {
-                for (int j = j0; j < j1; j++) {
-                    int off = j * width;
-                    int base = xArray[j % width];
-                    for (int i = 0; i < width; i++) {
-                        int k = base + i;
-                        if (k >= width) k -= width;
-                        int m = xArray[k];
-                        if (dec) dst[m + off] = src[i + off];
-                        else dst[i + off] = src[m + off];
-                    }
-                }
+        int[] xArray = md5Shuffle(key, w);
+        int[] dst = new int[src.length];
+        for (int i = 0; i < w; i++) {
+            for (int j = 0; j < h; j++) {
+                int m = xArray[(xArray[j % w] + i) % w];
+                if (decrypt) dst[m + j * w] = src[i + j * w];
+                else dst[i + j * w] = src[m + j * w];
             }
-        });
+        }
         return dst;
     }
 
     private static int[] perPixel(int[] src, int w, int h, String key, boolean decrypt) {
-        final int[] xArray = md5Shuffle(key, w);
-        final int[] yArray = md5Shuffle(key, h);
-        final int[] dst = new int[src.length];
-        final int width = w;
-        final int height = h;
-        final boolean dec = decrypt;
-        // (i,j) -> (m,n) 是一一映射（对固定 m，j -> n 也是双射），因此任意切片都不会写冲突。
-        Par.each(h, (long) w * h, new Par.Range() {
-            @Override public void run(int j0, int j1) {
-                for (int j = j0; j < j1; j++) {
-                    int base = xArray[j % width];
-                    for (int i = 0; i < width; i++) {
-                        int k = base + i;
-                        if (k >= width) k -= width;
-                        int m = xArray[k];
-                        int n = yArray[(yArray[m % height] + j) % height];
-                        if (dec) dst[m + n * width] = src[i + j * width];
-                        else dst[i + j * width] = src[m + n * width];
-                    }
-                }
+        int[] xArray = md5Shuffle(key, w);
+        int[] yArray = md5Shuffle(key, h);
+        int[] dst = new int[src.length];
+        for (int i = 0; i < w; i++) {
+            for (int j = 0; j < h; j++) {
+                int m = xArray[(xArray[j % w] + i) % w];
+                int n = yArray[(yArray[m % h] + j) % h];
+                if (decrypt) dst[m + n * w] = src[i + j * w];
+                else dst[i + j * w] = src[m + n * w];
             }
-        });
+        }
         return dst;
     }
 
     private static Result block(int[] src, int w, int h, String key, boolean decrypt) {
-        final int[] xArray = md5Shuffle(key, BLOCK_COUNT);
-        final int[] yArray = md5Shuffle(key, BLOCK_COUNT);
-        final int newW = (w % BLOCK_COUNT > 0) ? w + BLOCK_COUNT - w % BLOCK_COUNT : w;
-        final int newH = (h % BLOCK_COUNT > 0) ? h + BLOCK_COUNT - h % BLOCK_COUNT : h;
-        final int blockW = newW / BLOCK_COUNT;
-        final int blockH = newH / BLOCK_COUNT;
-        final int[] dst = new int[newW * newH];
-        final boolean dec = decrypt;
-        // 逐列写出：固定 i 时只写第 i 列，切片之间无冲突。
-        Par.each(newW, (long) newW * newH, new Par.Range() {
-            @Override public void run(int i0, int i1) {
-                for (int i = i0; i < i1; i++) {
-                    for (int j = 0; j < newH; j++) {
-                        int n = j;
-                        int m = (xArray[(n / blockH) % BLOCK_COUNT] * blockW + i) % newW;
-                        m = xArray[m / blockW] * blockW + m % blockW;
-                        n = (yArray[m / blockW % BLOCK_COUNT] * blockH + n) % newH;
-                        n = yArray[n / blockH] * blockH + n % blockH;
-                        if (dec) {
-                            dst[m + n * newW] = src[i + j * newW];
-                        } else {
-                            dst[i + j * newW] = src[m % w + n % h * w];
-                        }
-                    }
+        int[] xArray = md5Shuffle(key, BLOCK_COUNT);
+        int[] yArray = md5Shuffle(key, BLOCK_COUNT);
+        int newW = (w % BLOCK_COUNT > 0) ? w + BLOCK_COUNT - w % BLOCK_COUNT : w;
+        int newH = (h % BLOCK_COUNT > 0) ? h + BLOCK_COUNT - h % BLOCK_COUNT : h;
+        int blockW = newW / BLOCK_COUNT;
+        int blockH = newH / BLOCK_COUNT;
+        int[] dst = new int[newW * newH];
+        for (int i = 0; i < newW; i++) {
+            for (int j = 0; j < newH; j++) {
+                int n = j;
+                int m = (xArray[(n / blockH) % BLOCK_COUNT] * blockW + i) % newW;
+                m = xArray[m / blockW] * blockW + m % blockW;
+                n = (yArray[m / blockW % BLOCK_COUNT] * blockH + n) % newH;
+                n = yArray[n / blockH] * blockH + n % blockH;
+                if (decrypt) {
+                    dst[m + n * newW] = src[i + j * newW];
+                } else {
+                    dst[i + j * newW] = src[m % w + n % h * w];
                 }
             }
-        });
+        }
+        Result r = new Result(dst, newW, newH);
         if (decrypt) {
             // 还原时结果的可见尺寸仍是补齐前的原图尺寸（取左上角区域即可）
             return new Result(crop(dst, newW, newH, w, h), w, h);
         }
-        return new Result(dst, newW, newH);
+        return r;
     }
 
     /** 从大图中取出左上角 w x h 区域（方块混淆还原时用）。 */
@@ -519,13 +424,13 @@ public final class PopularCodecs {
 
     // ------------------------------------------------------------ 自动识别
 
+    /**
+     * 自动识别格式：把候选格式各还原一遍，取"最像照片"的结果（相邻像素差最小）。
+     * 只在还原模式下使用，默认参数为网络工具的默认密钥。
+     */
     /** 相邻像素差超过这个值就认为还不是照片，需要用别的次数再试一遍。 */
     private static final double NOISE_THRESHOLD = 25.0;
 
-    /**
-     * 自动识别格式：把候选格式各还原一遍，取“最像照片”的结果（相邻像素差最小）。
-     * 只在还原模式下使用，默认参数为网络工具的默认密钥。
-     */
     public static Result autoRestore(int[] pixels, int w, int h, String key, int times, int[] chosenFormat, double[] chosenScore) {
         Result best = bestOf(pixels, w, h, key, times, chosenFormat, chosenScore);
         double score = (chosenScore != null && chosenScore.length > 0) ? chosenScore[0] : Double.MAX_VALUE;
@@ -549,8 +454,7 @@ public final class PopularCodecs {
         for (int format = 0; format < FORMAT_COUNT - 1; format++) {
             Result candidate;
             try {
-                // transform 只读入参、不写入，所以不必给每个候选格式都克隆一份原图
-                candidate = transform(format, pixels, w, h, key, times, false);
+                candidate = transform(format, pixels.clone(), w, h, key, times, false);
             } catch (Throwable t) {
                 continue;
             }
@@ -570,36 +474,24 @@ public final class PopularCodecs {
     /** 越小越像自然图像：相邻像素灰度差均值（抽样计算，保证性能）。 */
     public static double smoothness(int[] pixels, int w, int h) {
         if (w < 2 || h < 2) return Double.MAX_VALUE;
-        final int step = Math.max(1, (w * h) / 200000);
-        final int width = w;
-        final int height = h;
-        final long[] acc = new long[1];
-        final int[] cnt = new int[1];
-        Par.each(h, (long) w * h, new Par.Range() {
-            @Override public void run(int from, int to) {
-                long sum = 0;
-                int count = 0;
-                for (int j = from; j < to; j++) {
-                    int row = j * width;
-                    for (int i = 0; i < width; i += step) {
-                        int idx = row + i;
-                        if (i + 1 < width) {
-                            sum += diff(pixels[idx], pixels[idx + 1]);
-                            count++;
-                        }
-                        if (j + 1 < height) {
-                            sum += diff(pixels[idx], pixels[idx + width]);
-                            count++;
-                        }
-                    }
+        long sum = 0;
+        int count = 0;
+        int step = Math.max(1, (w * h) / 200000);
+        for (int j = 0; j < h; j += 1) {
+            int row = j * w;
+            for (int i = 0; i < w; i += step) {
+                int idx = row + i;
+                if (i + 1 < w) {
+                    sum += diff(pixels[idx], pixels[idx + 1]);
+                    count++;
                 }
-                synchronized (acc) {
-                    acc[0] += sum;
-                    cnt[0] += count;
+                if (j + 1 < h) {
+                    sum += diff(pixels[idx], pixels[idx + w]);
+                    count++;
                 }
             }
-        });
-        return cnt[0] == 0 ? Double.MAX_VALUE : (double) acc[0] / cnt[0];
+        }
+        return count == 0 ? Double.MAX_VALUE : (double) sum / count;
     }
 
     private static int diff(int a, int b) {

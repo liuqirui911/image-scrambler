@@ -8,14 +8,15 @@
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Min SDK](https://img.shields.io/badge/minSdk-26%20(Android%208.0)-green.svg)](#环境要求)
-[![APK](https://img.shields.io/badge/APK-102%20KB-brightgreen.svg)](#体积预算)
+[![APK](https://img.shields.io/badge/APK-106%20KB-brightgreen.svg)](#体积预算)
 
 </div>
 
 > **English**: An offline Android app for obfuscating and restoring images with the formats popular in the
 > Chinese community — Xiaofanqie (Gilbert space-filling curve), PicEncrypt (logistic-map sorting),
 > row-pixel / per-pixel / block permutation — plus a ChaCha20-based format of its own.
-> Pixel-level compatible in both directions with the original tools. ~100 KB APK, no network permission.
+> Pixel-level compatible in both directions with the original tools. ~100 KB APK, no network permission,
+> multi-core accelerated (8 MP auto-restore in ~0.6 s on a modern phone).
 
 ---
 
@@ -104,6 +105,7 @@ app/
   java/com/eta/scramble/
     Scrambler.java          本机格式：ChaCha20 密钥流 + 行列洗牌（纯 Java，可独立测试）
     PopularCodecs.java      6 种网络通用格式 + 自动识别 + 平滑度评分
+    Par.java                轻量并行调度：按行/列/像素区间切片（结果与串行逐位一致，见「性能」）
     PngMeta.java            PNG tEXt 标记读写（格式 / 次数 / 原始尺寸）
     SegmentedControl.java   MIUI 风格自绘分段控件（含无障碍支持）
     MainActivity.java       主界面：混淆 / 还原、流式解码、保存与分享
@@ -120,13 +122,53 @@ docs/                       README 用图
 
 ### 体积预算
 
-APK 从最初的 535 KB 优化到 **102.5 KB**，做法：
+APK 从最初的 535 KB 优化到 **106.5 KB**（v1.7 加入多核并行后增加约 4 KB），做法：
 
 - **图标**：minSdk 26 起系统只会用 `mipmap-anydpi-v26` 的自适应图标，因此不再生成 5 档传统 PNG
   （省 266 KB）；自适应前景只留 xxxhdpi 一档（432px = 108dp）+ **WebP q92**（34 KB，同尺寸 PNG 需 240 KB）。
   前景插画缩到画布 96% 居中，给各家启动器的圆/方圆/水滴遮罩留余量。
 - **签名**：minSdk 26 无需 v1，只签 v2/v3（再省 META-INF 约 4 KB）。
 - 界面内引用前景图时配白色圆角底板 + `clipToOutline`，否则自适应前景是方形、界面里会丢圆角。
+
+### 性能
+
+所有格式都是**离散访存型置换**（每个输出像素独立算一个来源/去向，彼此不重叠），所以按行、列或像素区间
+切成 8 份交给多核并行即可，不需要 GPU：并行只切分互不重叠的输出区间，结果与串行实现**逐位完全一致**
+（`dev/ParityTest` 用 7 格式 × 加解密 × 1-4 次 × 11 种尺寸共 3212 例与 v1.6 冻结实现对拍）。
+
+具体做了四件事：
+
+1. **切片并行**：`Par.each` 把区间分给 `availableProcessors`（上限 8）个线程，小于 26 万像素的直接串行，
+   避免线程开销超过计算本身。
+2. **Logistic 链跳步**：PicEncrypt 逐行/逐列置换改成每段用 `f^((w-1)·j)(key)` 直接跳到自己那一段的起点
+   独立推进（同一串确定性 double 迭代，逐位相同），并复用每段的排序缓冲——原来每行都要新分配 4 个数组，
+   2000 行就是 160 MB 的垃圾。
+3. **密钥流分段定位**：本机格式把「通道旋转 + 密钥流异或」合并成一次遍历；每段用自己的 ChaCha20 流，
+   用字节偏移把块计数器直接跳到 `3·像素下标` 处，密钥流逐字节与顺序读取相同。
+4. **热路径微优化**：去掉内层循环的 `%`（改自增回绕）、复用 `MessageDigest` 实例、Gilbert 曲线按固定步长写入、
+   自动识别不再为每个候选格式克隆整图。
+
+真机实测（ART，同一台设备，`dev/DeviceBench`）：
+
+| 场景（8 MP） | v1.6 | v1.7 | 加速 |
+|---|---|---|---|
+| 自动识别（还原主路径） | 2452 ms | 593 ms | **4.1×** |
+| PicEncrypt 行列混淆 | 2137 ms | 322 ms | **6.6×** |
+| 行像素混淆 | 183 ms | 13 ms | **13.9×** |
+| 本机密钥流混淆 | 310 ms | 81 ms | **3.8×** |
+| 全像素混淆 | 149 ms | 46 ms | 3.2× |
+| 方块混淆 | 98 ms | 35 ms | 2.8× |
+| 小番茄混淆 | 108 ms | 102 ms | 1.06× |
+
+6 MP 时自动识别 1781 → 398 ms。**唯一没提速的是小番茄**：它的耗时几乎全在 Gilbert 曲线的下标序列生成上，
+那是一个深度优先递归遍历，写序必须严格顺序（属于光栅化前的串行准备工作），正在做的是把叶子循环的
+寻址常数化，已经比 v1.6 快约 20%。
+
+**为什么没上 GPU**：这些算法的代价在随机访存而不在算术吞吐，GPU 的 gather/scatter 反而更吃亏；
+而且要么走 Vulkan（需要 NDK，多出几百 KB 的 `.so`，与「体积越小越好」直接冲突），要么走 GLES 片元着色器
+（框架自带、加不了多少体积，但要把置换表编成纹理、受纹理尺寸上限约束，且索引/密钥流生成仍在 CPU）——
+在 8 核 CPU 已经做到 0.3-0.6 s 的前提下，收益不足以抵消复杂度和体积。真要继续压，
+下一步应该是把小番茄的曲线序生成也并行化，而不是换 GPU。
 
 ### 读取与报错
 

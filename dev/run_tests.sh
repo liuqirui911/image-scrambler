@@ -7,6 +7,7 @@ mkdir -p build/core
 
 echo "== 编译核心算法"
 javac -nowarn -d build/core \
+  app/java/com/eta/scramble/Par.java \
   app/java/com/eta/scramble/Scrambler.java \
   app/java/com/eta/scramble/PngMeta.java \
   app/java/com/eta/scramble/PopularCodecs.java
@@ -14,6 +15,11 @@ javac -nowarn -d build/core \
 echo "== 本机格式自测（无损性 / 错误密钥 / 性能）"
 javac -nowarn -cp build/core -d build/core dev/Test.java
 java -cp build/core Test
+
+echo "== 并行实现与 v1.6 冻结副本逐位对拍（7 格式 × 加解密 × 1-4 次 × 多尺寸）"
+javac -nowarn -cp build/core -d build/core \
+  dev/LegacyScrambler.java dev/LegacyCodecs.java dev/ParityTest.java
+java -cp build/core ParityTest
 
 # 与参考实现对拍（可选，需要先把参考仓库 clone 到 /tmp/refs）
 if [ -d /tmp/refs/ObfuscationUtils/src/main/java ]; then

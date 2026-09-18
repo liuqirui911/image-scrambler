@@ -4,6 +4,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
 /**
+ * v1.6 旧实现的冻结副本，仅用于 dev/ParityTest 做逐位等价对拍，不参与 APK 构建。
+ *
  * 混淆核心算法（纯 Java，不依赖 Android API，可单独测试）。
  *
  * 每一轮（pass）依次执行四步可逆变换：
@@ -12,13 +14,8 @@ import java.security.MessageDigest;
  *   3) 行置换：以密钥派生的伪随机序列对整行做 Fisher-Yates 洗牌
  *   4) 列置换：对每一列做同样的洗牌
  * 还原时按相反顺序执行逆变换。整个过程完全由密钥决定，且严格无损。
- *
- * 并行化（v1.7）：1)+2) 合并成一次遍历并按像素区间切片，每段各带一个 ChaCha 流
- * （用字节偏移把块计数器跳到对应位置，密钥流逐字节与原实现相同）；3) 与 4) 都是
- * “每个目标位置只写一次”的置换，按行切片即可。并行只切分互不重叠的输出区间，
- * 因此结果与串行实现逐位一致（dev/ParityTest 与 v1.6 的冻结实现对拍）。
  */
-public final class Scrambler {
+public final class LegacyScrambler {
 
     public static final int VERSION = 1;
     public static final int MIN_PASSES = 1;
@@ -26,7 +23,7 @@ public final class Scrambler {
     /** 密钥留空时使用的默认密钥，保证不填密钥的图片也能被任何人还原。 */
     public static final String DEFAULT_KEY = "混淆图";
 
-    private Scrambler() {}
+    private LegacyScrambler() {}
 
     public static int clampPasses(int p) {
         if (p < MIN_PASSES) return MIN_PASSES;
@@ -56,85 +53,67 @@ public final class Scrambler {
         }
     }
 
-    private static void forwardPass(final int[] px, final int[] buffer, final int w, final int h, final byte[] sub) {
-        final int total = w * h;
-        final int rot = ((stream(sub, "rot").nextByte() & 1) == 0) ? 8 : 16;
+    private static void forwardPass(int[] px, int[] buffer, int w, int h, byte[] sub) {
+        int total = w * h;
+        int rot = ((stream(sub, "rot").nextByte() & 1) == 0) ? 8 : 16;
 
-        // 1) 通道字节旋转 + 2) 密钥流异或：逐像素合并成一次遍历（原先要走两遍内存），
-        //    并按像素切片并行；每段用字节偏移 3*from 定位密钥流，逐字节与原实现相同。
-        Par.each(total, total, new Par.Range() {
-            @Override public void run(int from, int to) {
-                ChaCha xor = stream(sub, "xor").at(3L * from);
-                for (int i = from; i < to; i++) {
-                    int p = px[i];
-                    int rgb = p & 0x00FFFFFF;
-                    px[i] = (p & 0xFF000000) | (((rgb << rot) | (rgb >>> (24 - rot))) & 0x00FFFFFF);
-                    px[i] ^= xor.nextByte() | (xor.nextByte() << 8) | (xor.nextByte() << 16);
-                }
-            }
-        });
+        // 1) 通道字节旋转
+        for (int i = 0; i < total; i++) {
+            int p = px[i];
+            int rgb = p & 0x00FFFFFF;
+            px[i] = (p & 0xFF000000) | (((rgb << rot) | (rgb >>> (24 - rot))) & 0x00FFFFFF);
+        }
 
-        // 3) 行置换：目标行互不重叠
-        final int[] rows = permutation(stream(sub, "row"), h);
-        Par.each(h, total, new Par.Range() {
-            @Override public void run(int y0, int y1) {
-                for (int y = y0; y < y1; y++) System.arraycopy(px, rows[y] * w, buffer, y * w, w);
-            }
-        });
+        // 2) 密钥流异或
+        ChaCha xor = stream(sub, "xor");
+        for (int i = 0; i < total; i++) {
+            px[i] ^= xor.nextByte() | (xor.nextByte() << 8) | (xor.nextByte() << 16);
+        }
+
+        // 3) 行置换
+        int[] rows = permutation(stream(sub, "row"), h);
+        for (int y = 0; y < h; y++) System.arraycopy(px, rows[y] * w, buffer, y * w, w);
         System.arraycopy(buffer, 0, px, 0, total);
 
-        // 4) 列置换：逐行独立，每段用自己的行内缓冲
-        final int[] cols = permutation(stream(sub, "col"), w);
-        Par.each(h, total, new Par.Range() {
-            @Override public void run(int y0, int y1) {
-                int[] row = new int[w];
-                for (int y = y0; y < y1; y++) {
-                    int off = y * w;
-                    for (int x = 0; x < w; x++) row[x] = px[off + cols[x]];
-                    System.arraycopy(row, 0, px, off, w);
-                }
-            }
-        });
+        // 4) 列置换
+        int[] cols = permutation(stream(sub, "col"), w);
+        for (int y = 0; y < h; y++) {
+            int off = y * w;
+            for (int x = 0; x < w; x++) buffer[x] = px[off + cols[x]];
+            System.arraycopy(buffer, 0, px, off, w);
+        }
     }
 
-    private static void backwardPass(final int[] px, final int[] buffer, final int w, final int h, final byte[] sub) {
-        final int total = w * h;
-        final int rot = ((stream(sub, "rot").nextByte() & 1) == 0) ? 8 : 16;
+    private static void backwardPass(int[] px, int[] buffer, int w, int h, byte[] sub) {
+        int total = w * h;
+        int rot = ((stream(sub, "rot").nextByte() & 1) == 0) ? 8 : 16;
 
         // 4') 列逆置换
-        final int[] cols = permutation(stream(sub, "col"), w);
-        Par.each(h, total, new Par.Range() {
-            @Override public void run(int y0, int y1) {
-                int[] row = new int[w];
-                for (int y = y0; y < y1; y++) {
-                    int off = y * w;
-                    for (int x = 0; x < w; x++) row[cols[x]] = px[off + x];
-                    System.arraycopy(row, 0, px, off, w);
-                }
-            }
-        });
+        int[] cols = permutation(stream(sub, "col"), w);
+        for (int y = 0; y < h; y++) {
+            int off = y * w;
+            for (int x = 0; x < w; x++) buffer[cols[x]] = px[off + x];
+            System.arraycopy(buffer, 0, px, off, w);
+        }
 
         // 3') 行逆置换
-        final int[] rows = permutation(stream(sub, "row"), h);
-        Par.each(h, total, new Par.Range() {
-            @Override public void run(int y0, int y1) {
-                for (int y = y0; y < y1; y++) System.arraycopy(px, y * w, buffer, rows[y] * w, w);
-            }
-        });
+        int[] rows = permutation(stream(sub, "row"), h);
+        for (int y = 0; y < h; y++) System.arraycopy(px, y * w, buffer, rows[y] * w, w);
         System.arraycopy(buffer, 0, px, 0, total);
 
-        // 2') 异或 + 1') 逆旋转：同样合并成一次遍历并按像素切片
-        final int rrot = 24 - rot;
-        Par.each(total, total, new Par.Range() {
-            @Override public void run(int from, int to) {
-                ChaCha xor = stream(sub, "xor").at(3L * from);
-                for (int i = from; i < to; i++) {
-                    int p = px[i] ^ (xor.nextByte() | (xor.nextByte() << 8) | (xor.nextByte() << 16));
-                    int rgb = p & 0x00FFFFFF;
-                    px[i] = (p & 0xFF000000) | (((rgb << rrot) | (rgb >>> (24 - rrot))) & 0x00FFFFFF);
-                }
-            }
-        });
+        // 2') 异或（同一密钥流）
+        ChaCha xor = stream(sub, "xor");
+        for (int i = 0; i < total; i++) {
+            px[i] ^= xor.nextByte() | (xor.nextByte() << 8) | (xor.nextByte() << 16);
+        }
+
+        // 1') 通道旋转逆变换
+        int rrot = 24 - rot;
+        for (int i = 0; i < total; i++) {
+            int p = px[i];
+            int rgb = p & 0x00FFFFFF;
+            px[i] = (p & 0xFF000000) | (((rgb << rrot) | (rgb >>> (24 - rrot))) & 0x00FFFFFF);
+        }
     }
 
     private static int[] permutation(ChaCha c, int n) {
@@ -186,21 +165,6 @@ public final class Scrambler {
             for (int i = 0; i < 8; i++) state[4 + i] = le32(key, i * 4);
             state[12] = 0;
             for (int i = 0; i < 3; i++) state[13 + i] = le32(nonce, i * 4);
-        }
-
-        /**
-         * 把密钥流推进到第 byteOffset 个字节处（并行切片用）。
-         * 密钥流本就是“块计数器 0,1,2… 顺序拼接”，所以直接改块计数器再跳过块内偏移，
-         * 得到的字节序列与从头顺序读取完全一致。
-         */
-        ChaCha at(long byteOffset) {
-            long blockIndex = byteOffset >>> 6;
-            state[12] = (int) blockIndex;
-            state[13] += (int) (blockIndex >>> 32); // 与原实现计数器溢出的进位语义保持一致
-            index = 64;
-            refill();
-            index = (int) (byteOffset & 63);
-            return this;
         }
 
         int nextByte() {
