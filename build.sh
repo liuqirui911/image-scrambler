@@ -28,8 +28,8 @@ aapt2 link -o $OUT/app-unsigned.apk \
   --java $OUT/gen \
   --min-sdk-version 26 \
   --target-sdk-version 33 \
-  --version-code 9 \
-  --version-name 1.7.1 \
+  --version-code 10 \
+  --version-name 1.7.2 \
   --auto-add-overlay
 
 echo "==> javac"
@@ -60,12 +60,12 @@ if [ ! -f "$KS" ]; then
 fi
 apksigner sign --ks "$KS" --ks-pass pass:$KSPASS --key-pass pass:$KSPASS \
   --v1-signing-enabled false --v2-signing-enabled true \
-  --out "$OUT/混淆图-1.7.1.apk" $OUT/app-aligned.apk
+  --out "$OUT/混淆图-1.7.2.apk" $OUT/app-aligned.apk
 rm -f $OUT/app-aligned.apk
 
 echo "==> verify"
-apksigner verify --verbose "$OUT/混淆图-1.7.1.apk" | head -12
+apksigner verify --verbose "$OUT/混淆图-1.7.2.apk" | head -12
 echo "==> badging"
-aapt dump badging "$OUT/混淆图-1.7.1.apk" 2>/dev/null | head -8
+aapt dump badging "$OUT/混淆图-1.7.2.apk" 2>/dev/null | head -8
 echo "==> size"
-ls -la "$OUT/混淆图-1.7.1.apk" | awk '{printf "APK: %s  (%.1f KB)\n", $NF, $5/1024}'
+ls -la "$OUT/混淆图-1.7.2.apk" | awk '{printf "APK: %s  (%.1f KB)\n", $NF, $5/1024}'

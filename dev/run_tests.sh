@@ -50,4 +50,12 @@ else
   echo "（跳过官网逻辑对拍：需要 node 与 ImageMagick）"
 fi
 
+echo "== 自带 PNG 编码器（FastPng）交叉校验"
+javac -nowarn -cp build/core -d build/core dev/FastPngBench.java
+java -Xmx1g -cp build/core FastPngBench 1200 900 build
+if command -v convert >/dev/null 2>&1; then
+  convert build/fastpng.png -depth 8 rgba:- | cmp - build/fastpng.rgba     && echo "   FastPng 输出可被 ImageMagick 正确解码，像素逐字节一致"
+  convert build/fastpng_tagged.png -depth 8 rgba:- | cmp - build/fastpng.rgba     && echo "   插入 tEXt 标记后同样可解码"
+fi
+
 echo "== 全部测试结束"

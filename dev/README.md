@@ -20,6 +20,7 @@ bash dev/run_tests.sh
 | `ParityTest.java` | 并行重构的等价性：新实现必须与冻结副本逐位相同（7 格式 × 加解密 × times 1-4 × 11 种尺寸 × 5 种密钥，共 3212 例），并校验自动识别的选中格式与评分 | 上面两个冻结副本 |
 | `Perf.java` | 逐格式基准（桌面 JVM），检查往返正确性并打印耗时 | 无 |
 | `DeviceBench.java` | 真机基准：同一设备上对比 v1.6 与 v1.7 的逐格式耗时（d8 打成 dex 后用 `dalvikvm` 跑，测 ART 真实表现） | 上面两个冻结副本 |
+| `FastPngBench.java` | 自带 PNG 编码器（`FastPng`）的基准与交叉校验：写出 PNG 与原始 RGBA，可用 ImageMagick / Python zlib 独立解码比对 | 无 |
 | `TomatoSplit.java` | 拆解小番茄格式的耗时构成（曲线序生成 vs 像素置换），用于判断下一步优化方向 | 无 |
 
 ## 关于参考实现对拍

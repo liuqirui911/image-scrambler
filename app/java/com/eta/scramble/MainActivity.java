@@ -702,11 +702,20 @@ public class MainActivity extends Activity {
                     output = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888);
                     output.setPixels(outPixels, 0, outW, 0, 0, outW, outH);
                     long t3 = SystemClock.elapsedRealtime();
-                    ByteArrayOutputStream bo = new ByteArrayOutputStream();
-                    if (!output.compress(Bitmap.CompressFormat.PNG, 100, bo)) {
-                        throw new IllegalStateException("PNG 编码失败");
+                    boolean fastPng = false;
+                    if (scrambleMode) {
+                        // 混淆结果是噪声图：系统编码器的自适应滤波对噪声零收益，改用自带编码器
+                        // （不滤波 + 分段并行 deflate），同样是标准 PNG，兼容性不变
+                        bytes = FastPng.encode(outPixels, outW, outH);
+                        fastPng = true;
+                    } else {
+                        // 还原输出是照片：保留系统编码器，滤波能显著减小体积
+                        ByteArrayOutputStream bo = new ByteArrayOutputStream();
+                        if (!output.compress(Bitmap.CompressFormat.PNG, 100, bo)) {
+                            throw new IllegalStateException("PNG 编码失败");
+                        }
+                        bytes = bo.toByteArray();
                     }
-                    bytes = bo.toByteArray();
                     long t4 = SystemClock.elapsedRealtime();
                     if (writeTag) {
                         bytes = PngMeta.insertText(bytes, PngMeta.buildTag(usedFormat, times, w, h));
@@ -714,7 +723,8 @@ public class MainActivity extends Activity {
                     long t5 = SystemClock.elapsedRealtime();
                     Log.i(TAG, (scrambleMode ? "混淆 " : "还原 ") + w + "x" + h + " 格式=" + usedFormat
                             + " 次数=" + times + "（输出 " + outW + "x" + outH + "）| 取像素 " + (t1 - t0)
-                            + "，算法 " + (t2 - t1) + "，位图 " + (t3 - t2) + "，PNG 编码 " + (t4 - t3)
+                            + "，算法 " + (t2 - t1) + "，位图 " + (t3 - t2) + "，PNG 编码 "
+                            + (t4 - t3) + (fastPng ? "（自带并行）" : "（系统）")
                             + "，标记 " + (t5 - t4) + "，合计 " + (t5 - started) + " ms");
                 } catch (Throwable t) {
                     error = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
